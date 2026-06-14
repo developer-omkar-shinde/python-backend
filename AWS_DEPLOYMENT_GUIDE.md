@@ -23,7 +23,8 @@ This guide walks you through everything needed to take a Python FastAPI applicat
 
 ---
 
-<a id="s1"></a>
+
+
 ## 1. Project Overview
 
 We have a small Python FastAPI application that exposes a few HTTP endpoints. The goal is to:
@@ -54,7 +55,8 @@ Application Load Balancer (public URL → routes traffic to your container)
 
 ---
 
-<a id="s2"></a>
+
+
 ## 2. Project Structure
 
 ```
@@ -73,10 +75,11 @@ python-backend-learning/
 
 ---
 
-<a id="s3"></a>
+
+
 ## 3. The Application Code
 
-**`src/hello_api/main.py`**
+`**src/hello_api/main.py**`
 
 ```python
 from datetime import UTC, datetime
@@ -129,7 +132,8 @@ if __name__ == "__main__":
 
 ---
 
-<a id="s4"></a>
+
+
 ## 4. What is Docker?
 
 Docker packages your application and everything it needs to run (Python version, OS libraries, dependencies) into a single unit called an **image**. When you run that image it becomes a **container**.
@@ -140,6 +144,7 @@ Docker packages your application and everything it needs to run (Python version,
 The key benefit: the container runs **identically** on your laptop, a teammate's machine, and AWS. No more "works on my machine" problems.
 
 The `Dockerfile` is the instruction file that tells Docker:
+
 - What base OS/Python version to use
 - What files to copy in
 - What dependencies to install
@@ -147,7 +152,8 @@ The `Dockerfile` is the instruction file that tells Docker:
 
 ---
 
-<a id="s5"></a>
+
+
 ## 5. Install Docker
 
 ### Check if Docker is already installed
@@ -184,7 +190,8 @@ docker ps
 
 ---
 
-<a id="s6"></a>
+
+
 ## 6. Prepare Files for Docker
 
 These files are needed before you can build a Docker image.
@@ -226,18 +233,20 @@ CMD ["uvicorn", "src.hello_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 **What each line does:**
 
-| Line | Explanation |
-|------|-------------|
-| `FROM python:3.11-slim` | Start from an official lightweight Python 3.11 image |
-| `USER root` | Run as root to install packages |
-| `WORKDIR /app` | All subsequent commands run from `/app` |
-| `RUN apt-get install -y curl` | Install `curl` — required for health checks |
-| `COPY requirements.txt` | Copy dependency list into the image |
-| `RUN pip install` | Install Python dependencies |
-| `COPY src/` | Copy your application code |
-| `ENV PYTHONPATH=/app` | So Python can find `src.hello_api.main` |
-| `EXPOSE 8000` | Document that the container listens on port 8000 |
-| `CMD [...]` | Command to start the app when the container runs |
+
+| Line                          | Explanation                                          |
+| ----------------------------- | ---------------------------------------------------- |
+| `FROM python:3.11-slim`       | Start from an official lightweight Python 3.11 image |
+| `USER root`                   | Run as root to install packages                      |
+| `WORKDIR /app`                | All subsequent commands run from `/app`              |
+| `RUN apt-get install -y curl` | Install `curl` — required for health checks          |
+| `COPY requirements.txt`       | Copy dependency list into the image                  |
+| `RUN pip install`             | Install Python dependencies                          |
+| `COPY src/`                   | Copy your application code                           |
+| `ENV PYTHONPATH=/app`         | So Python can find `src.hello_api.main`              |
+| `EXPOSE 8000`                 | Document that the container listens on port 8000     |
+| `CMD [...]`                   | Command to start the app when the container runs     |
+
 
 ### 6.3 `.dockerignore`
 
@@ -253,7 +262,8 @@ __pycache__
 
 ---
 
-<a id="s7"></a>
+
+
 ## 7. Build and Run Docker Locally
 
 ### 7.1 Build the Docker image
@@ -287,6 +297,7 @@ docker run -p 8000:8000 backend-learning
 - `-p 8000:8000` — map port 8000 on your machine to port 8000 inside the container
 
 You should see:
+
 ```
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000
@@ -304,8 +315,9 @@ curl http://localhost:8000/thanks
 ```
 
 Or open in your browser:
-- http://localhost:8000/health
-- http://localhost:8000/hello
+
+- [http://localhost:8000/health](http://localhost:8000/health)
+- [http://localhost:8000/hello](http://localhost:8000/hello)
 
 ### 7.5 Stop the container
 
@@ -329,7 +341,8 @@ docker rmi backend-learning  # remove a local image
 
 ---
 
-<a id="s8"></a>
+
+
 ## 8. AWS Key Concepts
 
 Before creating any AWS resources, understand what each one is. This will make the setup steps much easier to follow.
@@ -344,11 +357,13 @@ Before creating any AWS resources, understand what each one is. This will make t
 When ECS Fargate runs your container, it pulls the image from ECR over AWS's internal network (fast, free, private).
 
 Every image in ECR has a URI like:
+
 ```
 <account-id>.dkr.ecr.<region>.amazonaws.com/<repo-name>:<tag>
 ```
 
 Example:
+
 ```
 088971275490.dkr.ecr.eu-north-1.amazonaws.com/repo-learning:latest
 ```
@@ -364,11 +379,13 @@ A private storage bucket for your Docker images on AWS. Every time you push a ne
 
 **Fargate** is the compute engine behind ECS. With Fargate you never touch a server — AWS manages the underlying machines entirely.
 
-| ECS + EC2 | ECS + Fargate |
-|-----------|---------------|
-| You manage the EC2 servers | You manage nothing |
-| More control, more complexity | Simple, pay per task |
+
+| ECS + EC2                               | ECS + Fargate           |
+| --------------------------------------- | ----------------------- |
+| You manage the EC2 servers              | You manage nothing      |
+| More control, more complexity           | Simple, pay per task    |
 | Good for high-traffic cost optimization | Good for most use cases |
+
 
 ---
 
@@ -379,6 +396,7 @@ A logical grouping that holds your services. Think of it as a folder that organi
 
 **ECS Task Definition (`backend-learning-task:1`)**
 A versioned blueprint that tells ECS exactly how to run your container:
+
 - Which Docker image to use (from ECR)
 - How much CPU and memory to give it (`256` units = 0.25 vCPU, `512` MB RAM)
 - Which port to open (`8000`)
@@ -432,18 +450,20 @@ Without the port 80 rule, the load balancer cannot receive public traffic. This 
 Where your container's console output is stored on AWS. Every `print()` statement, every uvicorn `INFO:` log line, every error — it all goes here automatically.
 
 View live logs with:
+
 ```bash
 aws logs tail /ecs/backend-learning --follow --region eu-north-1
 ```
 
 ---
 
-<a id="s9"></a>
+
+
 ## 9. Create AWS Account and IAM User
 
 ### 9.1 Create AWS Account
 
-1. Go to https://aws.amazon.com/
+1. Go to [https://aws.amazon.com/](https://aws.amazon.com/)
 2. Click **"Create an AWS Account"**
 3. Enter your email, password, account name
 4. Enter credit card details (required, but free tier covers most basics for 12 months)
@@ -473,14 +493,15 @@ Using your root account to run CLI commands is insecure. Create a dedicated IAM 
 5. Select **Local code** as the use case
 6. Click **Next** → **Create access key**
 7. **IMPORTANT:** Copy and save both:
-   - **Access Key ID** (looks like `AKIA...`)
-   - **Secret Access Key** (shown only once — if you lose it, you must create a new key)
+  - **Access Key ID** (looks like `AKIA...`)
+  - **Secret Access Key** (shown only once — if you lose it, you must create a new key)
 
 > Never share these keys or commit them to git. They give full access to your AWS account.
 
 ---
 
-<a id="s10"></a>
+
+
 ## 10. Install and Configure AWS CLI
 
 ### 10.1 Install AWS CLI
@@ -490,6 +511,7 @@ brew install awscli
 ```
 
 Verify:
+
 ```bash
 aws --version
 ```
@@ -501,6 +523,7 @@ aws configure
 ```
 
 Enter when prompted:
+
 ```
 AWS Access Key ID [None]: <paste your Access Key ID>
 AWS Secret Access Key [None]: <paste your Secret Access Key>
@@ -517,6 +540,7 @@ aws sts get-caller-identity
 ```
 
 Expected output:
+
 ```json
 {
     "UserId": "AIDA...",
@@ -529,7 +553,8 @@ If you see your account ID, everything is configured correctly.
 
 ---
 
-<a id="s11"></a>
+
+
 ## 11. Push Docker Image to ECR
 
 ### 11.1 Create an ECR Repository
@@ -576,17 +601,20 @@ aws ecr list-images --repository-name repo-learning --region eu-north-1
 
 ---
 
-<a id="s12"></a>
+
+
 ## 12. Deploy to ECS Fargate
 
 ### 12.1 Get networking information
 
 Get your default VPC ID:
+
 ```bash
 aws ec2 describe-vpcs --region eu-north-1 --query 'Vpcs[0].VpcId' --output text
 ```
 
 Get two subnet IDs from that VPC:
+
 ```bash
 aws ec2 describe-subnets --region eu-north-1 \
   --filters "Name=vpc-id,Values=<your-vpc-id>" \
@@ -683,13 +711,15 @@ Create `task-definition.json` in your project root:
 
 **Explanation of key fields:**
 
-| Field | Value | Explanation |
-|-------|-------|-------------|
-| `cpu` | `256` | 0.25 vCPU |
-| `memory` | `512` | 512 MB RAM |
-| `containerPort` | `8000` | Port your FastAPI app listens on |
-| `healthCheck.command` | `curl /health` | ECS uses this to check if your container is alive |
-| `startPeriod` | `60` | Give the container 60s to start before failing health checks |
+
+| Field                 | Value          | Explanation                                                  |
+| --------------------- | -------------- | ------------------------------------------------------------ |
+| `cpu`                 | `256`          | 0.25 vCPU                                                    |
+| `memory`              | `512`          | 512 MB RAM                                                   |
+| `containerPort`       | `8000`         | Port your FastAPI app listens on                             |
+| `healthCheck.command` | `curl /health` | ECS uses this to check if your container is alive            |
+| `startPeriod`         | `60`           | Give the container 60s to start before failing health checks |
+
 
 ### 12.6 Register the Task Definition
 
@@ -803,6 +833,7 @@ aws elbv2 describe-load-balancers \
 ```
 
 This gives you a DNS name like:
+
 ```
 backend-learning-alb-1264963434.eu-north-1.elb.amazonaws.com
 ```
@@ -848,7 +879,8 @@ aws logs tail /ecs/backend-learning --follow --region eu-north-1
 
 ---
 
-<a id="s13"></a>
+
+
 ## 13. Day-to-Day Workflow
 
 ### Local Development (fast, no Docker)
@@ -861,6 +893,7 @@ uv run uvicorn src.hello_api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Or using the venv:
+
 ```bash
 .venv/bin/uvicorn src.hello_api.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -897,7 +930,7 @@ docker push 088971275490.dkr.ecr.eu-north-1.amazonaws.com/repo-learning:latest
 aws ecs update-service \
   --cluster backend-learning-cluster \
   --service backend-learning-service \
-  --force-new-deployment \
+  --force-new-deployment \get-login-password
   --region eu-north-1
 
 # 4. Wait ~60 seconds, then test
@@ -936,23 +969,26 @@ curl <alb-url>/health     ← verify live on AWS
 
 ---
 
-<a id="s14"></a>
+
+
 ## 14. Resources and URLs
 
 ### Your AWS Resources (from this setup)
 
-| Resource | Type | Name / Value |
-|----------|------|--------------|
-| AWS Account ID | Account | `088971275490` |
-| Region | Config | `eu-north-1` (Stockholm) |
-| IAM User | Identity | `dev-cli` |
-| ECR Repository | Image storage | `repo-learning` |
-| ECS Cluster | Container grouping | `backend-learning-cluster` |
-| ECS Task Definition | Container blueprint | `backend-learning-task:1` |
-| ECS Service | Container manager | `backend-learning-service` |
-| Load Balancer | Public entry point | `backend-learning-alb` |
-| Security Group | Firewall rules | `backend-learning-sg` |
-| CloudWatch Log Group | Logs storage | `/ecs/backend-learning` |
+
+| Resource             | Type                | Name / Value               |
+| -------------------- | ------------------- | -------------------------- |
+| AWS Account ID       | Account             | `088971275490`             |
+| Region               | Config              | `eu-north-1` (Stockholm)   |
+| IAM User             | Identity            | `dev-cli`                  |
+| ECR Repository       | Image storage       | `repo-learning`            |
+| ECS Cluster          | Container grouping  | `backend-learning-cluster` |
+| ECS Task Definition  | Container blueprint | `backend-learning-task:1`  |
+| ECS Service          | Container manager   | `backend-learning-service` |
+| Load Balancer        | Public entry point  | `backend-learning-alb`     |
+| Security Group       | Firewall rules      | `backend-learning-sg`      |
+| CloudWatch Log Group | Logs storage        | `/ecs/backend-learning`    |
+
 
 ### Your Live API Endpoints
 
@@ -974,10 +1010,10 @@ http://localhost:8000/thanks
 
 ### Helpful AWS Console Links
 
-- ECR: https://eu-north-1.console.aws.amazon.com/ecr/repositories
-- ECS: https://eu-north-1.console.aws.amazon.com/ecs/v2/clusters
-- CloudWatch Logs: https://eu-north-1.console.aws.amazon.com/cloudwatch/home#logsV2:log-groups
-- Load Balancers: https://eu-north-1.console.aws.amazon.com/ec2/home#LoadBalancers
+- ECR: [https://eu-north-1.console.aws.amazon.com/ecr/repositories](https://eu-north-1.console.aws.amazon.com/ecr/repositories)
+- ECS: [https://eu-north-1.console.aws.amazon.com/ecs/v2/clusters](https://eu-north-1.console.aws.amazon.com/ecs/v2/clusters)
+- CloudWatch Logs: [https://eu-north-1.console.aws.amazon.com/cloudwatch/home#logsV2:log-groups](https://eu-north-1.console.aws.amazon.com/cloudwatch/home#logsV2:log-groups)
+- Load Balancers: [https://eu-north-1.console.aws.amazon.com/ec2/home#LoadBalancers](https://eu-north-1.console.aws.amazon.com/ec2/home#LoadBalancers)
 
 ---
 
@@ -992,3 +1028,4 @@ Now that your app is live, here are natural next steps:
 5. **Set up CI/CD** — automate the deploy pipeline with GitHub Actions
 6. **Add HTTPS** — attach an SSL certificate via AWS Certificate Manager
 7. **Custom domain** — use Route 53 to point a domain to your ALB
+
