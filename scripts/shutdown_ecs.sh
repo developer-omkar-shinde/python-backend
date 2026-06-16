@@ -12,6 +12,8 @@ set -e
 CLUSTER_NAME="python-backend"
 REGION="us-east-1"
 VERBOSE=false
+DELETE_ALB=false
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Color codes for output
 RED='\033[0;31m'
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=true
       shift
       ;;
+    --delete-alb)
+      DELETE_ALB=true
+      shift
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -42,6 +48,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --cluster CLUSTER_NAME   ECS cluster name (default: backend-learning-cluster)"
       echo "  --region REGION          AWS region (default: eu-north-1)"
       echo "  --verbose                Enable verbose output"
+      echo "  --delete-alb             Delete load balancer and save config for later restore (saves ~\$0.008/hr)"
       echo "  --help                   Show this help message"
       exit 0
       ;;
@@ -158,49 +165,97 @@ fi
 
 echo ""
 
-# Step 5: Check for load balancers and deactivate targets
+# Step 5: Handle Application Load Balancers
 log_info "Checking for Application Load Balancers..."
 
-# Find load balancers with our cluster name pattern
-LOAD_BALANCERS=$(aws elbv2 describe-load-balancers --region "$REGION" --query "LoadBalancers[?contains(LoadBalancerName, 'backend-learning')].LoadBalancerArn" --output text)
+LOAD_BALANCERS=$(aws elbv2 describe-load-balancers \
+  --region "$REGION" \
+  --query "LoadBalancers[?contains(LoadBalancerName, 'backend-learning')].LoadBalancerArn" \
+  --output text)
+
+ALB_DELETED=false
 
 if [ -z "$LOAD_BALANCERS" ]; then
   log_info "No load balancers found with pattern 'backend-learning'."
 else
-  log_info "Found load balancer(s). Checking target groups..."
-  
   for LB_ARN in $LOAD_BALANCERS; do
-    LB_NAME=$(echo "$LB_ARN" | awk -F'/' '{print $(NF-1)"/"$NF}')
-    log_info "Load balancer: $LB_NAME"
-    
-    # Get target groups for this load balancer
-    TARGET_GROUPS=$(aws elbv2 describe-target-groups --load-balancer-arn "$LB_ARN" --region "$REGION" --query 'TargetGroups[].TargetGroupArn' --output text)
-    
-    for TG_ARN in $TARGET_GROUPS; do
-      TG_NAME=$(echo "$TG_ARN" | awk -F'/' '{print $NF}')
-      
-      # Deregister all targets from the target group
-      TARGETS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region "$REGION" --query 'TargetHealthDescriptions[].Target.Id' --output text)
-      
-      if [ ! -z "$TARGETS" ]; then
-        log_info "Deregistering targets from: $TG_NAME"
-        
-        for TARGET_ID in $TARGETS; do
-          aws elbv2 deregister-targets \
-            --target-group-arn "$TG_ARN" \
-            --targets Id="$TARGET_ID" \
-            --region "$REGION" \
-            --output json > /dev/null
-        done
-        
-        log_success "Targets deregistered from: $TG_NAME"
-      fi
-    done
+    LB_NAME=$(aws elbv2 describe-load-balancers \
+      --load-balancer-arns "$LB_ARN" \
+      --region "$REGION" \
+      --query 'LoadBalancers[0].LoadBalancerName' \
+      --output text)
+
+    log_info "Found load balancer: $LB_NAME"
+
+    if [ "$DELETE_ALB" = true ]; then
+      # Save full ALB config so startup_ecs.sh can recreate it
+      log_info "Saving ALB config to: $SCRIPT_DIR/alb-config.json"
+
+      LB_DETAIL=$(aws elbv2 describe-load-balancers \
+        --load-balancer-arns "$LB_ARN" \
+        --region "$REGION" \
+        --query 'LoadBalancers[0]' \
+        --output json)
+
+      LISTENERS=$(aws elbv2 describe-listeners \
+        --load-balancer-arn "$LB_ARN" \
+        --region "$REGION" \
+        --output json)
+
+      python3 -c "
+import json, sys
+lb = json.loads(sys.argv[1])
+listeners = json.loads(sys.argv[2])
+config = {'LoadBalancer': lb, 'Listeners': listeners['Listeners']}
+with open('$SCRIPT_DIR/alb-config.json', 'w') as f:
+    json.dump(config, f, indent=2, default=str)
+print('Config saved.')
+" "$LB_DETAIL" "$LISTENERS"
+
+      log_success "Config saved to: $SCRIPT_DIR/alb-config.json"
+
+      log_info "Deleting load balancer: $LB_NAME"
+      aws elbv2 delete-load-balancer \
+        --load-balancer-arn "$LB_ARN" \
+        --region "$REGION" > /dev/null
+
+      log_success "Load balancer deleted: $LB_NAME"
+      log_info "Note: Target groups are kept (free when empty) so ECS service config stays intact."
+      ALB_DELETED=true
+    else
+      # Just deregister targets — ALB keeps running (still billed per hour)
+      TARGET_GROUPS=$(aws elbv2 describe-target-groups \
+        --load-balancer-arn "$LB_ARN" \
+        --region "$REGION" \
+        --query 'TargetGroups[].TargetGroupArn' \
+        --output text)
+
+      for TG_ARN in $TARGET_GROUPS; do
+        TG_NAME=$(echo "$TG_ARN" | awk -F'/' '{print $NF}')
+        TARGETS=$(aws elbv2 describe-target-health \
+          --target-group-arn "$TG_ARN" \
+          --region "$REGION" \
+          --query 'TargetHealthDescriptions[].Target.Id' \
+          --output text)
+
+        if [ ! -z "$TARGETS" ]; then
+          log_info "Deregistering targets from: $TG_NAME"
+          for TARGET_ID in $TARGETS; do
+            aws elbv2 deregister-targets \
+              --target-group-arn "$TG_ARN" \
+              --targets Id="$TARGET_ID" \
+              --region "$REGION" \
+              --output json > /dev/null
+          done
+          log_success "Targets deregistered from: $TG_NAME"
+        fi
+      done
+
+      echo ""
+      log_warning "Load balancer '$LB_NAME' is still running and billing at ~\$0.008/hr (~\$5.76/mo)."
+      log_info "To delete it and save costs, rerun with: ./shutdown_ecs.sh --delete-alb"
+    fi
   done
-  
-  echo ""
-  log_info "Note: Load balancers are still running (minimal cost). To delete them:"
-  log_info "  aws elbv2 delete-load-balancer --load-balancer-arn <LB_ARN> --region $REGION"
 fi
 
 echo ""
@@ -211,13 +266,11 @@ echo ""
 echo "Summary:"
 echo "  • All services scaled to 0 desired count"
 echo "  • All running tasks stopped"
-echo "  • Targets deregistered from load balancers"
-echo ""
-echo "Next steps to further reduce costs:"
-echo "  1. Delete load balancers (if not needed):"
-echo "     aws elbv2 delete-load-balancer --load-balancer-arn <ARN>"
-echo "  2. Delete target groups (if not needed):"
-echo "     aws elbv2 delete-target-group --target-group-arn <ARN>"
-echo "  3. View cost summary:"
-echo "     aws ce get-cost-and-usage --region $REGION --time-period Start=2024-01-01,End=2024-01-31"
+if [ "$ALB_DELETED" = true ]; then
+  echo "  • Load balancer deleted (config saved to scripts/alb-config.json)"
+  echo "  • Target groups kept intact (no cost when empty)"
+else
+  echo "  • Targets deregistered from load balancers (ALB still billing)"
+  echo "  • Tip: use --delete-alb flag to also delete the load balancer"
+fi
 echo ""

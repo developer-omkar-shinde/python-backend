@@ -14,6 +14,8 @@ SERVICE_NAME="onboarding-service"
 REGION="us-east-1"
 DESIRED_COUNT=1
 TIMEOUT=300  # 5 minutes
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ALB_CONFIG_FILE="$SCRIPT_DIR/alb-config.json"
 
 # Color codes for output
 RED='\033[0;31m'
@@ -104,7 +106,137 @@ fi
 log_success "Cluster found: $CLUSTER_NAME"
 echo ""
 
-# Step 2: Get service information
+# Step 2: Recreate load balancer if it was previously deleted by shutdown_ecs.sh --delete-alb
+if [ -f "$ALB_CONFIG_FILE" ]; then
+  log_info "Found ALB config file. Checking if load balancer needs to be recreated..."
+
+  LB_NAME=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(d['LoadBalancer']['LoadBalancerName'])
+")
+
+  # Check if the ALB already exists
+  EXISTING_LB_ARN=$(aws elbv2 describe-load-balancers \
+    --names "$LB_NAME" \
+    --region "$REGION" \
+    --query 'LoadBalancers[0].LoadBalancerArn' \
+    --output text 2>/dev/null || echo "")
+
+  if [ -z "$EXISTING_LB_ARN" ] || [ "$EXISTING_LB_ARN" = "None" ]; then
+    log_info "Recreating load balancer: $LB_NAME"
+
+    # Extract values from saved config
+    SUBNETS=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(' '.join(az['SubnetId'] for az in d['LoadBalancer']['AvailabilityZones']))
+")
+
+    SECURITY_GROUPS=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(' '.join(d['LoadBalancer']['SecurityGroups']))
+")
+
+    SCHEME=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(d['LoadBalancer']['Scheme'])
+")
+
+    LB_TYPE=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(d['LoadBalancer']['Type'])
+")
+
+    NEW_LB_ARN=$(aws elbv2 create-load-balancer \
+      --name "$LB_NAME" \
+      --type "$LB_TYPE" \
+      --scheme "$SCHEME" \
+      --subnets $SUBNETS \
+      --security-groups $SECURITY_GROUPS \
+      --region "$REGION" \
+      --query 'LoadBalancers[0].LoadBalancerArn' \
+      --output text)
+
+    log_success "Load balancer created: $NEW_LB_ARN"
+    log_info "Waiting for load balancer to become active..."
+
+    aws elbv2 wait load-balancer-available \
+      --load-balancer-arns "$NEW_LB_ARN" \
+      --region "$REGION"
+
+    log_success "Load balancer is active."
+
+    # Recreate each listener pointing to the original target group
+    LISTENER_COUNT=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(len(d['Listeners']))
+")
+
+    for i in $(seq 0 $((LISTENER_COUNT - 1))); do
+      PORT=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(d['Listeners'][$i]['Port'])
+")
+      PROTOCOL=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+print(d['Listeners'][$i]['Protocol'])
+")
+      TG_ARN=$(python3 -c "
+import json
+with open('$ALB_CONFIG_FILE') as f:
+    d = json.load(f)
+actions = d['Listeners'][$i]['DefaultActions']
+for a in actions:
+    if 'ForwardConfig' in a:
+        print(a['ForwardConfig']['TargetGroups'][0]['TargetGroupArn'])
+        break
+    elif 'TargetGroupArn' in a:
+        print(a['TargetGroupArn'])
+        break
+")
+
+      aws elbv2 create-listener \
+        --load-balancer-arn "$NEW_LB_ARN" \
+        --protocol "$PROTOCOL" \
+        --port "$PORT" \
+        --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
+        --region "$REGION" \
+        --output json > /dev/null
+
+      log_success "Listener restored: $PROTOCOL:$PORT"
+    done
+
+    NEW_DNS=$(aws elbv2 describe-load-balancers \
+      --load-balancer-arns "$NEW_LB_ARN" \
+      --region "$REGION" \
+      --query 'LoadBalancers[0].DNSName' \
+      --output text)
+
+    log_success "Load balancer DNS: $NEW_DNS"
+    log_info "Note: DNS name may have changed. Update your Route53 / DNS records if needed."
+    echo ""
+  else
+    log_info "Load balancer '$LB_NAME' already exists. Skipping recreation."
+    echo ""
+  fi
+fi
+
+# Step 3: Get service information
 log_info "Retrieving service information..."
 
 SERVICE_INFO=$(aws ecs describe-services \
@@ -126,7 +258,7 @@ log_success "Service found: $SERVICE_NAME"
 log_info "Current state: Running=$CURRENT_RUNNING, Desired=$CURRENT_DESIRED"
 echo ""
 
-# Step 3: Update desired count
+# Step 4: Update desired count
 log_info "Updating service to desired count: $DESIRED_COUNT"
 
 aws ecs update-service \
@@ -139,7 +271,7 @@ aws ecs update-service \
 log_success "Service update initiated"
 echo ""
 
-# Step 4: Wait for service to stabilize
+# Step 5: Wait for service to stabilize
 log_info "Waiting for service to stabilize (up to 5 minutes)..."
 START_TIME=$(date +%s)
 
@@ -179,7 +311,7 @@ done
 
 echo ""
 
-# Step 5: Display final status
+# Step 6: Display final status
 log_info "Retrieving final service status..."
 
 FINAL_STATUS=$(aws ecs describe-services \
