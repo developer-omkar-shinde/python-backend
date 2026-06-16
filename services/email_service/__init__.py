@@ -1,4 +1,4 @@
-"""Onboarding event consumer — processes domain events from SQS (via SNS)."""
+"""Email service — processes onboarding domain events from SQS (via SNS)."""
 
 from __future__ import annotations
 
