@@ -1,0 +1,225 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/**'
+      - 'helper/**'
+      - '.github/workflows/deploy-lambda.yml'
+      - 'lambda-config.json'
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  detect-changes:
+    name: Detect changed Lambda services
+    runs-on: ubuntu-latest
+    outputs:
+      onboarding-lambda-changed: ${{ steps.detect.outputs.onboarding_lambda_changed }}
+      email-lambda-changed: ${{ steps.detect.outputs.email_lambda_changed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect which Lambda services changed
+        id: detect
+        run: |
+          # Check if onboarding Lambda or its dependencies changed
+          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '^services/onboarding_service/|^helper/'; then
+            echo "onboarding_lambda_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "onboarding_lambda_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if email Lambda or its dependencies changed
+          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '^services/email_service/|^helper/'; then
+            echo "email_lambda_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "email_lambda_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-onboarding-lambda:
+    name: Build Onboarding Lambda Package
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.onboarding-lambda-changed == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Lambda deployment package
+        run: |
+          cd services/onboarding_service/onboarding
+          
+          # Create deployment directory
+          mkdir -p lambda-build
+          
+          # Copy application code
+          cp -r helper ../../.. lambda-build/
+          cp -r services/onboarding_service lambda-build/
+          
+          # Install dependencies
+          cd lambda-build
+          pip install -r services/onboarding_service/onboarding/requirements.txt -t .
+          
+          # Create deployment zip
+          cd ../
+          zip -r onboarding-lambda.zip lambda-build/
+          
+          # Move zip to accessible location
+          mv onboarding-lambda.zip ../../../
+
+      - name: Upload Lambda package
+        uses: actions/upload-artifact@v3
+        with:
+          name: onboarding-lambda-package
+          path: onboarding-lambda.zip
+          retention-days: 1
+
+  build-email-lambda:
+    name: Build Email Lambda Package
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.email-lambda-changed == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Lambda deployment package
+        run: |
+          cd services/email_service
+          
+          # Create deployment directory
+          mkdir -p lambda-build
+          
+          # Copy application code
+          cp -r ../../helper lambda-build/
+          cp -r .. lambda-build/services/email_service
+          
+          # Install dependencies
+          cd lambda-build
+          pip install -r services/email_service/requirements.txt -t .
+          
+          # Create deployment zip
+          cd ../
+          zip -r email-lambda.zip lambda-build/
+          
+          # Move zip to accessible location
+          mv email-lambda.zip ../../
+
+      - name: Upload Lambda package
+        uses: actions/upload-artifact@v3
+        with:
+          name: email-lambda-package
+          path: email-lambda.zip
+          retention-days: 1
+
+  deploy-onboarding-lambda:
+    name: Deploy Onboarding Lambda to AWS
+    runs-on: ubuntu-latest
+    needs: build-onboarding-lambda
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Lambda package
+        uses: actions/download-artifact@v3
+        with:
+          name: onboarding-lambda-package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to AWS Lambda
+        run: |
+          # Load Lambda configuration
+          FUNCTION_NAME=$(jq -r '.lambdas.onboarding.function_name' lambda-config.json)
+          
+          echo "Deploying to Lambda function: $FUNCTION_NAME"
+          
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://onboarding-lambda.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for update to complete
+          echo "Waiting for deployment to complete..."
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Onboarding Lambda deployed successfully"
+
+      - name: Send deployment notification
+        if: success()
+        run: |
+          echo "Deployment successful for onboarding-lambda"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+
+  deploy-email-lambda:
+    name: Deploy Email Lambda to AWS
+    runs-on: ubuntu-latest
+    needs: build-email-lambda
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Lambda package
+        uses: actions/download-artifact@v3
+        with:
+          name: email-lambda-package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to AWS Lambda
+        run: |
+          # Load Lambda configuration
+          FUNCTION_NAME=$(jq -r '.lambdas.email.function_name' lambda-config.json)
+          
+          echo "Deploying to Lambda function: $FUNCTION_NAME"
+          
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://email-lambda.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for update to complete
+          echo "Waiting for deployment to complete..."
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Email Lambda deployed successfully"
+
+      - name: Send deployment notification
+        if: success()
+        run: |
+          echo "Deployment successful for email-lambda"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
