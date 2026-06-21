@@ -12,6 +12,10 @@ Comprehensive single source of truth covering:
 - ✅ Our reference implementation
 - ✅ Troubleshooting
 
+## Event-Driven Routing
+
+- `EVENTBRIDGE_GUIDE.md` — Content-based event routing with EventBridge (bus, rules, SQS targets)
+
 ## Deployment & Infrastructure
 
 - `LAMBDA_AUTO_DEPLOYMENT.md` — GitHub Actions auto-deploy on every push to main
@@ -23,6 +27,7 @@ Comprehensive single source of truth covering:
 | Need | Read |
 |------|------|
 | **How to set up SNS, SQS, Lambda?** | `SNS_SQS_LAMBDA_INTEGRATION.md` |
+| **How to route events by content (EventBridge)?** | `EVENTBRIDGE_GUIDE.md` |
 | **How to auto-deploy Lambda on push?** | `LAMBDA_AUTO_DEPLOYMENT.md` |
 | **How to deploy to AWS?** | `AWS_DEPLOYMENT_GUIDE.md` |
 | **How to optimize costs?** | `AWS_CREDIT_OPTIMIZATION.md` |
