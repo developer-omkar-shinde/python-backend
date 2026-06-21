@@ -14,6 +14,7 @@ Comprehensive single source of truth covering:
 
 ## Deployment & Infrastructure
 
+- `LAMBDA_AUTO_DEPLOYMENT.md` — GitHub Actions auto-deploy on every push to main
 - `AWS_DEPLOYMENT_GUIDE.md` — Infrastructure setup, EKS, databases, monitoring
 - `AWS_CREDIT_OPTIMIZATION.md` — Cost optimization tips
 
@@ -22,6 +23,7 @@ Comprehensive single source of truth covering:
 | Need | Read |
 |------|------|
 | **How to set up SNS, SQS, Lambda?** | `SNS_SQS_LAMBDA_INTEGRATION.md` |
+| **How to auto-deploy Lambda on push?** | `LAMBDA_AUTO_DEPLOYMENT.md` |
 | **How to deploy to AWS?** | `AWS_DEPLOYMENT_GUIDE.md` |
 | **How to optimize costs?** | `AWS_CREDIT_OPTIMIZATION.md` |
 | **How does our code work?** | `SNS_SQS_LAMBDA_INTEGRATION.md` → Reference Implementation section |
