@@ -31,3 +31,6 @@ node_modules/
 
 # Generated AWS infrastructure config (saved by shutdown_ecs.sh --delete-alb)
 scripts/alb-config.json
+
+# Lambda build artifacts (produced by scripts/build_onboarding_lambda.sh)
+dist/
